@@ -1,17 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Premiere XML Exporter</title>
-  <link rel="stylesheet" href="style.css" />
+  <meta charset="UTF-8">
+  <title>Premiere XML Parser</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h1>Premiere Pro XML → CSV Exporter</h1>
-  <p>Upload a Premiere Pro sequence XML file to extract clip names and timecodes.</p>
+  <h1>Premiere Sequence XML Parser</h1>
+  <p>Upload your Premiere sequence (.xml) and get a CSV export of all clips.</p>
 
-  <input type="file" id="xmlFile" accept=".xml"/>
+  <input type="file" id="xmlFile" accept=".xml">
   <button id="processBtn">Process XML</button>
+  <button id="downloadBtn" disabled>Download CSV</button>
 
   <div id="output"></div>
 
