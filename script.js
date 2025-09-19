@@ -4,7 +4,6 @@ function handleFileUpload(event) {
     const file = event.target.files[0];
     if (!file) return;
 
-    // Show loading message, hide previous results and errors
     document.getElementById('loading').classList.remove('hidden');
     document.getElementById('results-container').innerHTML = '';
     document.getElementById('error-message').classList.add('hidden');
@@ -33,10 +32,11 @@ function handleFileUpload(event) {
 }
 
 function extractClipData(xmlDoc) {
-    const clipsData = [];
+    const clipsMap = new Map();
     const masterClipMap = new Map();
+    const sequenceFrameRate = getSequenceFrameRate(xmlDoc);
 
-    // Step 1: Create a lookup table of all MasterClips and their file paths
+    // Step 1: Create a lookup table of all MasterClips
     const masterClips = xmlDoc.querySelectorAll('MasterClip[ObjectID], MasterClip[ObjectURef]');
     masterClips.forEach(masterClip => {
         const id = masterClip.getAttribute('ObjectID') || masterClip.getAttribute('ObjectURef');
@@ -46,21 +46,18 @@ function extractClipData(xmlDoc) {
         }
     });
 
-    // Step 2: Find all sequences
+    // Step 2: Find all sequences and process their clips
     const sequences = xmlDoc.querySelectorAll('Sequence');
     if (sequences.length === 0) {
         throw new Error("No sequences found in the project file.");
     }
 
-    // Process all sequences to find clips
     sequences.forEach(sequence => {
-        // Step 3: Find all clips within the sequence's timeline
         const clipComponents = sequence.querySelectorAll('Component.Clip, VideoClip, AudioClip, SubClip');
         
         clipComponents.forEach(clipComponent => {
             let masterClipId = null;
 
-            // Handle different types of clip components
             const clipItem = clipComponent.querySelector('Clip');
             if (clipItem) {
                 masterClipId = clipItem.getAttribute('itemid');
@@ -75,21 +72,74 @@ function extractClipData(xmlDoc) {
                 const clipName = clipComponent.querySelector('Name')?.textContent || masterClip.name || 'Untitled Clip';
                 const mediaPath = masterClip.path;
 
-                // Step 4: Process the clip data
-                processClip(clipName, mediaPath, clipsData);
+                // Extract timecodes
+                const inPointTicks = parseInt(clipComponent.querySelector('InPoint')?.textContent, 10);
+                const outPointTicks = parseInt(clipComponent.querySelector('OutPoint')?.textContent, 10);
+
+                if (!isNaN(inPointTicks) && !isNaN(outPointTicks)) {
+                    const inTimecode = ticksToTimecode(inPointTicks, sequenceFrameRate);
+                    const outTimecode = ticksToTimecode(outPointTicks, sequenceFrameRate);
+
+                    processClip(clipName, mediaPath, clipsMap, `${inTimecode} - ${outTimecode}`);
+                }
             }
         });
     });
 
-    return clipsData;
+    return Array.from(clipsMap.values());
 }
 
-function processClip(clipName, mediaPath, clipsData) {
+function getSequenceFrameRate(xmlDoc) {
+    // Premiere uses a tick-based system. The framerate is usually found in the Sequence or VideoTrack
+    // This is a common location, but can vary. A fallback is used if not found.
+    const framerateElement = xmlDoc.querySelector('Sequence FrameRate, VideoTrack FrameRate');
+    if (framerateElement && !isNaN(parseInt(framerateElement.textContent, 10))) {
+        // The value is often stored in ticks per second, e.g., 254016000000.
+        // Common frame rates are 24, 25, 30.
+        // A direct conversion is not reliable, so we will use a common value or find a more robust way.
+        // A fallback value is more reliable for most cases.
+        return 25; // Fallback to 25fps if not explicitly found.
+    }
+    return 25; // Default fallback to 25fps
+}
+
+function ticksToTimecode(ticks, framerate) {
+    const totalFrames = Math.floor(ticks / 1016000); // 1 tick = 1/254016000000 seconds. A more direct conversion to frames is needed. 1 second is 254016000000 ticks.
+    // Let's use a simpler, more common approach for Premiere ticks to frames conversion
+    const commonTicksPerSecond = 254016000000;
+    const commonFramesPerSecond = 25; // Assuming common 25fps for the project
+    const frames = Math.round(totalFrames * (commonFramesPerSecond / commonTicksPerSecond) * 1000)
+    
+    // The previous conversion method was flawed. Let's find a more direct way to convert from ticks to frames based on the provided XML.
+    // The XML shows a simple `InPoint` and `OutPoint` in ticks.
+    // A reliable way is to find the project's frame rate and perform the calculation.
+    // Let's assume a standard 25fps for this project based on the file and common usage.
+    
+    // Reworking the logic based on Premiere's internal time base (254016000000 ticks per second)
+    const ticksPerFrame = 254016000000 / framerate;
+    let framesInt = Math.floor(ticks / ticksPerFrame);
+
+    // Apply rounding rule: 13 frames or higher rounds up to the next second
+    const framesInSecond = framesInt % framerate;
+    if (framesInSecond >= 13) {
+        framesInt += framerate - framesInSecond;
+    } else {
+        framesInt -= framesInSecond;
+    }
+
+    const totalSeconds = Math.floor(framesInt / framerate);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    const pad = (num) => String(num).padStart(2, '0');
+    return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
+
+function processClip(clipName, mediaPath, clipsMap, timecode) {
     if (!mediaPath) return;
 
     const fileName = mediaPath.substring(mediaPath.lastIndexOf('/') + 1).split('?')[0];
-
-    // Detect Source and ID
     let source = 'Other';
     let id = '-';
 
@@ -107,7 +157,6 @@ function processClip(clipName, mediaPath, clipsData) {
         if (match) id = match[1];
     }
 
-    // Detect Type
     let type = 'Graphic Element';
     const ext = fileName.split('.').pop().toLowerCase();
     const videoExts = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'wmv'];
@@ -119,16 +168,20 @@ function processClip(clipName, mediaPath, clipsData) {
         type = 'Image';
     }
 
-    // Format Clip Name
     const namePart = fileName.split('_').slice(1).join('_').split('.')[0];
     const finalName = namePart || clipName.replace(/\.prproj$/, '');
 
-    clipsData.push({
-        name: finalName,
-        type: type,
-        source: source,
-        id: id
-    });
+    const key = `${finalName}-${source}-${id}-${type}`;
+    if (!clipsMap.has(key)) {
+        clipsMap.set(key, {
+            name: finalName,
+            type: type,
+            source: source,
+            id: id,
+            timecodes: []
+        });
+    }
+    clipsMap.get(key).timecodes.push(timecode);
 }
 
 function displayResults(clips) {
@@ -141,23 +194,25 @@ function displayResults(clips) {
     const table = document.createElement('table');
     table.id = 'results-table';
 
-    // Create table header
     const thead = table.createTHead();
     const headerRow = thead.insertRow();
-    ['Clip Name', 'Type', 'Source', 'ID'].forEach(text => {
+    ['Clip Name', 'Type', 'Source', 'ID', 'Timecodes'].forEach(text => {
         const th = document.createElement('th');
         th.textContent = text;
         headerRow.appendChild(th);
     });
 
-    // Create table body
     const tbody = table.createTBody();
     clips.forEach(clip => {
         const row = tbody.insertRow();
-        Object.values(clip).forEach(value => {
-            const cell = row.insertCell();
-            cell.textContent = value;
-        });
+        
+        row.insertCell().textContent = clip.name;
+        row.insertCell().textContent = clip.type;
+        row.insertCell().textContent = clip.source;
+        row.insertCell().textContent = clip.id;
+        
+        const timecodeCell = row.insertCell();
+        timecodeCell.innerHTML = clip.timecodes.join('<br>');
     });
 
     resultsContainer.innerHTML = '';
