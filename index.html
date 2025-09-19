@@ -4,7 +4,94 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Premiere Pro Clip Extractor</title>
-    <link rel="stylesheet" href="style.css">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f4f7f9;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            background-color: #fff;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.05);
+            text-align: center;
+            width: 100%;
+            max-width: 900px;
+        }
+        h1 {
+            font-size: 2.5rem;
+            color: #1a237e;
+            margin-bottom: 10px;
+        }
+        p {
+            color: #666;
+            margin-bottom: 30px;
+        }
+        .upload-area {
+            margin: 30px 0;
+        }
+        .file-label {
+            display: inline-block;
+            padding: 15px 30px;
+            background-color: #4CAF50;
+            color: #fff;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.3s ease;
+        }
+        .file-label:hover {
+            background-color: #45a049;
+        }
+        #prproj-file {
+            display: none;
+        }
+        .hidden {
+            display: none;
+        }
+        #loading, #error-message {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        #loading {
+            background-color: #e0f7fa;
+            color: #00796b;
+        }
+        #error-message {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+        #results-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 30px;
+            font-size: 0.9rem;
+            text-align: left;
+        }
+        #results-table th, #results-table td {
+            padding: 12px 15px;
+            border: 1px solid #ddd;
+        }
+        #results-table th {
+            background-color: #f0f4f7;
+            font-weight: bold;
+            color: #333;
+        }
+        #results-table tr:nth-child(even) {
+            background-color: #fafafa;
+        }
+        #results-table tr:hover {
+            background-color: #eef3f6;
+        }
+    </style>
 </head>
 <body>
 
@@ -31,6 +118,170 @@
         </div>
     </div>
 
-    <script src="script.js"></script>
-</body>
-</html>
+    <script>
+        console.log('--- Script Loaded Successfully ---');
+
+        document.getElementById('prproj-file').addEventListener('change', handleFileUpload);
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) {
+                console.warn('No file selected.');
+                return;
+            }
+
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('results-container').innerHTML = '';
+            document.getElementById('error-message').classList.add('hidden');
+            console.log('--- Starting file processing ---');
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const xmlString = e.target.result;
+                    const parser = new DOMParser();
+                    const xmlDoc = parser.parseFromString(xmlString, 'text/xml');
+
+                    if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
+                        const errorText = 'Invalid XML file. Please ensure you have uploaded a valid .prproj file.';
+                        console.error('Parser Error:', errorText, xmlDoc.getElementsByTagName('parsererror')[0]);
+                        document.getElementById('error-message').innerHTML = `<p>${errorText}</p>`;
+                        document.getElementById('error-message').classList.remove('hidden');
+                        throw new Error(errorText);
+                    }
+
+                    console.log('File successfully parsed as XML.');
+                    const clips = extractClipData(xmlDoc);
+                    displayResults(clips);
+                } catch (error) {
+                    console.error("An error occurred during file processing:", error);
+                    document.getElementById('error-message').innerHTML = `<p>An error occurred: ${error.message}</p>`;
+                    document.getElementById('error-message').classList.remove('hidden');
+                } finally {
+                    document.getElementById('loading').classList.add('hidden');
+                    console.log('--- Finished file processing ---');
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function extractClipData(xmlDoc) {
+            const clipsMap = new Map();
+            const masterClipMap = new Map();
+            const sequenceFrameRate = getSequenceFrameRate(xmlDoc);
+
+            console.log('Step 1: Building MasterClip lookup table...');
+            const masterClips = xmlDoc.querySelectorAll('MasterClip[ObjectID], MasterClip[ObjectURef]');
+            console.log(`Found ${masterClips.length} potential MasterClips.`);
+            masterClips.forEach(masterClip => {
+                const id = masterClip.getAttribute('ObjectID') || masterClip.getAttribute('ObjectURef');
+                const pathUrl = masterClip.querySelector('PathUrl')?.textContent || '';
+                if (id && pathUrl) {
+                    masterClipMap.set(id, { name: masterClip.querySelector('Name')?.textContent, path: pathUrl });
+                }
+            });
+            console.log(`MasterClip lookup table built with ${masterClipMap.size} valid entries.`);
+
+            console.log('Step 2: Finding Sequences...');
+            const sequences = xmlDoc.querySelectorAll('Sequence');
+            if (sequences.length === 0) {
+                console.error("Error: No sequences found in the project file. The file may be corrupt or an unsupported format.");
+                return [];
+            }
+            console.log(`Found ${sequences.length} sequences.`);
+
+            sequences.forEach((sequence, index) => {
+                console.log(`Processing Sequence #${index + 1}...`);
+                const clipComponents = sequence.querySelectorAll('Component.Clip, VideoClip, AudioClip, SubClip');
+                console.log(`Found ${clipComponents.length} clip components in this sequence.`);
+                
+                clipComponents.forEach(clipComponent => {
+                    let masterClipId = null;
+
+                    const clipItem = clipComponent.querySelector('Clip');
+                    if (clipItem) {
+                        masterClipId = clipItem.getAttribute('itemid');
+                    } else if (clipComponent.querySelector('MasterClip')) {
+                        masterClipId = clipComponent.querySelector('MasterClip').getAttribute('ObjectRef') || clipComponent.querySelector('MasterClip').getAttribute('ObjectURef');
+                    } else if (clipComponent.getAttribute('itemid')) {
+                        masterClipId = clipComponent.getAttribute('itemid');
+                    }
+
+                    if (masterClipId && masterClipMap.has(masterClipId)) {
+                        const masterClip = masterClipMap.get(masterClipId);
+                        const clipName = clipComponent.querySelector('Name')?.textContent || masterClip.name || 'Untitled Clip';
+                        const mediaPath = masterClip.path;
+                        const inPointTicks = parseInt(clipComponent.querySelector('InPoint')?.textContent, 10);
+                        const outPointTicks = parseInt(clipComponent.querySelector('OutPoint')?.textContent, 10);
+
+                        if (!isNaN(inPointTicks) && !isNaN(outPointTicks)) {
+                            const inTimecode = ticksToTimecode(inPointTicks, sequenceFrameRate);
+                            const outTimecode = ticksToTimecode(outPointTicks, sequenceFrameRate);
+
+                            processClip(clipName, mediaPath, clipsMap, `${inTimecode} - ${outTimecode}`);
+                        } else {
+                            console.warn(`Skipping clip '${clipName}' due to missing timecode data.`);
+                        }
+                    } else {
+                        console.warn(`Skipping a clip component as its master clip reference was not found.`);
+                    }
+                });
+            });
+
+            return Array.from(clipsMap.values());
+        }
+
+        function getSequenceFrameRate(xmlDoc) {
+            const framerateElement = xmlDoc.querySelector('Sequence FrameRate, VideoTrack FrameRate');
+            if (framerateElement && !isNaN(parseInt(framerateElement.textContent, 10))) {
+                console.log('Found FrameRate element, assuming standard 25fps for calculations.');
+                return 25;
+            }
+            console.warn('Could not find FrameRate in sequence. Assuming a default of 25fps.');
+            return 25;
+        }
+
+        function ticksToTimecode(ticks, framerate) {
+            const ticksPerFrame = 254016000000 / framerate;
+            let framesInt = Math.floor(ticks / ticksPerFrame);
+
+            const framesInSecond = framesInt % framerate;
+            if (framesInSecond >= 13) {
+                framesInt += framerate - framesInSecond;
+            } else {
+                framesInt -= framesInSecond;
+            }
+
+            const totalSeconds = Math.floor(framesInt / framerate);
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+
+            const pad = (num) => String(num).padStart(2, '0');
+            return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+        }
+
+        function processClip(clipName, mediaPath, clipsMap, timecode) {
+            if (!mediaPath) return;
+
+            const fileName = mediaPath.substring(mediaPath.lastIndexOf('/') + 1).split('?')[0];
+            let source = 'Other';
+            let id = '-';
+
+            if (fileName.toUpperCase().includes('COLOURBOX')) {
+                source = 'Colourbox';
+                const match = fileName.match(/COLOURBOX(\d+)/i);
+                if (match) id = match[1];
+            } else if (fileName.toUpperCase().includes('IMAGO')) {
+                source = 'Imago';
+                const match = fileName.match(/IMAGO(\d+)/i);
+                if (match) id = match[1];
+            } else if (fileName.toUpperCase().includes('ARTLIST')) {
+                source = 'Artlist';
+                const match = fileName.match(/^(\d+)_/);
+                if (match) id = match[1];
+            }
+
+            let type = 'Graphic Element';
+            const ext = fileName.split('.').pop().toLowerCase();
+            const videoExts = ['mp4', 'mov', 'avi', '
