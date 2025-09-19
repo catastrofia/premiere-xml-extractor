@@ -1,36 +1,102 @@
 body {
-  font-family: Arial, sans-serif;
-  margin: 20px;
-  background: #f9f9f9;
-  color: #333;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: #f4f7f9;
+    color: #333;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    margin: 0;
+    padding: 20px;
+}
+
+.container {
+    background-color: #fff;
+    padding: 40px;
+    border-radius: 12px;
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.05);
+    text-align: center;
+    width: 100%;
+    max-width: 900px;
 }
 
 h1 {
-  color: #2c3e50;
+    font-size: 2.5rem;
+    color: #1a237e;
+    margin-bottom: 10px;
 }
 
-input, button {
-  margin: 10px 5px;
-  padding: 8px 12px;
-  border: none;
-  border-radius: 5px;
+p {
+    color: #666;
+    margin-bottom: 30px;
 }
 
-button {
-  background: #3498db;
-  color: white;
-  cursor: pointer;
+.upload-area {
+    margin: 30px 0;
 }
 
-button:disabled {
-  background: #bdc3c7;
-  cursor: not-allowed;
+.file-label {
+    display: inline-block;
+    padding: 15px 30px;
+    background-color: #4CAF50;
+    color: #fff;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background-color 0.3s ease;
 }
 
-#output {
-  margin-top: 20px;
-  padding: 10px;
-  background: white;
-  border: 1px solid #ccc;
-  border-radius: 5px;
+.file-label:hover {
+    background-color: #45a049;
+}
+
+#prproj-file {
+    display: none;
+}
+
+.hidden {
+    display: none;
+}
+
+#loading, #error-message {
+    margin-top: 20px;
+    padding: 15px;
+    border-radius: 8px;
+}
+
+#loading {
+    background-color: #e0f7fa;
+    color: #00796b;
+}
+
+#error-message {
+    background-color: #ffebee;
+    color: #c62828;
+}
+
+#results-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 30px;
+    font-size: 0.9rem;
+    text-align: left;
+}
+
+#results-table th, #results-table td {
+    padding: 12px 15px;
+    border: 1px solid #ddd;
+}
+
+#results-table th {
+    background-color: #f0f4f7;
+    font-weight: bold;
+    color: #333;
+}
+
+#results-table tr:nth-child(even) {
+    background-color: #fafafa;
+}
+
+#results-table tr:hover {
+    background-color: #eef3f6;
 }
