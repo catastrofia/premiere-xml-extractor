@@ -2,11 +2,17 @@ document.getElementById('prproj-file').addEventListener('change', handleFileUplo
 
 function handleFileUpload(event) {
     const file = event.target.files[0];
-    if (!file) return;
+    if (!file) {
+        console.warn('No file selected.');
+        return;
+    }
 
+    // Show loading message, hide previous results and errors
     document.getElementById('loading').classList.remove('hidden');
     document.getElementById('results-container').innerHTML = '';
     document.getElementById('error-message').classList.add('hidden');
+    console.clear();
+    console.log('--- Starting file processing ---');
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -16,16 +22,23 @@ function handleFileUpload(event) {
             const xmlDoc = parser.parseFromString(xmlString, 'text/xml');
 
             if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
-                throw new Error("Invalid XML file.");
+                const errorText = 'Invalid XML file. Please ensure you have uploaded a valid .prproj file.';
+                console.error('Parser Error:', errorText, xmlDoc.getElementsByTagName('parsererror')[0]);
+                document.getElementById('error-message').innerHTML = `<p>${errorText}</p>`;
+                document.getElementById('error-message').classList.remove('hidden');
+                throw new Error(errorText);
             }
 
+            console.log('File successfully parsed as XML.');
             const clips = extractClipData(xmlDoc);
             displayResults(clips);
         } catch (error) {
-            console.error("Error parsing file:", error);
+            console.error("An error occurred during file processing:", error);
+            document.getElementById('error-message').innerHTML = `<p>An error occurred: ${error.message}</p>`;
             document.getElementById('error-message').classList.remove('hidden');
         } finally {
             document.getElementById('loading').classList.add('hidden');
+            console.log('--- Finished file processing ---');
         }
     };
     reader.readAsText(file);
@@ -36,8 +49,9 @@ function extractClipData(xmlDoc) {
     const masterClipMap = new Map();
     const sequenceFrameRate = getSequenceFrameRate(xmlDoc);
 
-    // Step 1: Create a lookup table of all MasterClips
+    console.log('Step 1: Building MasterClip lookup table...');
     const masterClips = xmlDoc.querySelectorAll('MasterClip[ObjectID], MasterClip[ObjectURef]');
+    console.log(`Found ${masterClips.length} potential MasterClips.`);
     masterClips.forEach(masterClip => {
         const id = masterClip.getAttribute('ObjectID') || masterClip.getAttribute('ObjectURef');
         const pathUrl = masterClip.querySelector('PathUrl')?.textContent || '';
@@ -45,15 +59,19 @@ function extractClipData(xmlDoc) {
             masterClipMap.set(id, { name: masterClip.querySelector('Name')?.textContent, path: pathUrl });
         }
     });
+    console.log(`MasterClip lookup table built with ${masterClipMap.size} valid entries.`);
 
-    // Step 2: Find all sequences and process their clips
+    console.log('Step 2: Finding Sequences...');
     const sequences = xmlDoc.querySelectorAll('Sequence');
     if (sequences.length === 0) {
-        throw new Error("No sequences found in the project file.");
+        throw new Error("No sequences found in the project file. The file may be corrupt or an unsupported format.");
     }
+    console.log(`Found ${sequences.length} sequences.`);
 
-    sequences.forEach(sequence => {
+    sequences.forEach((sequence, index) => {
+        console.log(`Processing Sequence #${index + 1}...`);
         const clipComponents = sequence.querySelectorAll('Component.Clip, VideoClip, AudioClip, SubClip');
+        console.log(`Found ${clipComponents.length} clip components in this sequence.`);
         
         clipComponents.forEach(clipComponent => {
             let masterClipId = null;
@@ -71,8 +89,6 @@ function extractClipData(xmlDoc) {
                 const masterClip = masterClipMap.get(masterClipId);
                 const clipName = clipComponent.querySelector('Name')?.textContent || masterClip.name || 'Untitled Clip';
                 const mediaPath = masterClip.path;
-
-                // Extract timecodes
                 const inPointTicks = parseInt(clipComponent.querySelector('InPoint')?.textContent, 10);
                 const outPointTicks = parseInt(clipComponent.querySelector('OutPoint')?.textContent, 10);
 
@@ -81,7 +97,11 @@ function extractClipData(xmlDoc) {
                     const outTimecode = ticksToTimecode(outPointTicks, sequenceFrameRate);
 
                     processClip(clipName, mediaPath, clipsMap, `${inTimecode} - ${outTimecode}`);
+                } else {
+                    console.warn(`Skipping clip '${clipName}' due to missing timecode data.`);
                 }
+            } else {
+                console.warn(`Skipping a clip component as its master clip reference was not found.`);
             }
         });
     });
@@ -90,32 +110,18 @@ function extractClipData(xmlDoc) {
 }
 
 function getSequenceFrameRate(xmlDoc) {
-    // Premiere uses a tick-based system. The framerate is usually found in the Sequence or VideoTrack
-    // This is a common location, but can vary. A fallback is used if not found.
     const framerateElement = xmlDoc.querySelector('Sequence FrameRate, VideoTrack FrameRate');
     if (framerateElement && !isNaN(parseInt(framerateElement.textContent, 10))) {
-        // The value is often stored in ticks per second, e.g., 254016000000.
-        // Common frame rates are 24, 25, 30.
-        // A direct conversion is not reliable, so we will use a common value or find a more robust way.
-        // A fallback value is more reliable for most cases.
-        return 25; // Fallback to 25fps if not explicitly found.
+        // This value is not the direct frame rate, but a tick value.
+        // A common practice is to assume a standard rate and calculate from there.
+        console.log('Found FrameRate element, assuming standard 25fps for calculations.');
+        return 25;
     }
-    return 25; // Default fallback to 25fps
+    console.warn('Could not find FrameRate in sequence. Assuming a default of 25fps.');
+    return 25;
 }
 
 function ticksToTimecode(ticks, framerate) {
-    const totalFrames = Math.floor(ticks / 1016000); // 1 tick = 1/254016000000 seconds. A more direct conversion to frames is needed. 1 second is 254016000000 ticks.
-    // Let's use a simpler, more common approach for Premiere ticks to frames conversion
-    const commonTicksPerSecond = 254016000000;
-    const commonFramesPerSecond = 25; // Assuming common 25fps for the project
-    const frames = Math.round(totalFrames * (commonFramesPerSecond / commonTicksPerSecond) * 1000)
-    
-    // The previous conversion method was flawed. Let's find a more direct way to convert from ticks to frames based on the provided XML.
-    // The XML shows a simple `InPoint` and `OutPoint` in ticks.
-    // A reliable way is to find the project's frame rate and perform the calculation.
-    // Let's assume a standard 25fps for this project based on the file and common usage.
-    
-    // Reworking the logic based on Premiere's internal time base (254016000000 ticks per second)
     const ticksPerFrame = 254016000000 / framerate;
     let framesInt = Math.floor(ticks / ticksPerFrame);
 
@@ -187,7 +193,7 @@ function processClip(clipName, mediaPath, clipsMap, timecode) {
 function displayResults(clips) {
     const resultsContainer = document.getElementById('results-container');
     if (clips.length === 0) {
-        resultsContainer.innerHTML = '<p>No clips found in the main sequence.</p>';
+        resultsContainer.innerHTML = '<p>No clips found in any sequence.</p>';
         return;
     }
 
